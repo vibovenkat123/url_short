@@ -1,28 +1,35 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
+	_ "github.com/mattn/go-sqlite3"
 	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
 
 type App struct {
-	urls map[string]string
+	db *sql.DB
 }
 
-var app = App{
-	urls: map[string]string{},
-}
+var app = App{}
 var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
 
 func badReqRes(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusBadRequest)
 	http.Error(w, "bad request", http.StatusBadRequest)
+}
+
+func serverErrReqRes(err error, w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusInternalServerError)
+	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
 func notFoundReqRes(w http.ResponseWriter) {
@@ -44,13 +51,44 @@ func randCode(length int) string {
 	return string(bytes)
 }
 
+var schema = `
+CREATE TABLE IF NOT EXISTS url (raw_url TEXT, code VARCHAR(7));
+`
+
 func main() {
+	dbFile := os.Getenv("url_db_file")
+	if len(dbFile) == 0 {
+		dbFile = "main.db"
+	}
+	db, err := sql.Open("sqlite3", dbFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = db.Ping()
+	if err != nil {
+		log.Fatal(err)
+	}
+	app.db = db
+	execShema(schema, app.db)
+	defer db.Close()
+
+	if err != nil {
+		log.Panicf("Cannot connect to database `%s`", dbFile)
+	}
+
 	mux := http.NewServeMux()
 	rand.Seed(time.Now().UnixNano())
 	mux.HandleFunc("/new", newUrl)
 	mux.HandleFunc("/", getShort)
-	err := http.ListenAndServe(":3000", mux)
+	err = http.ListenAndServe(":3000", mux)
 	log.Fatal(err)
+}
+
+func execShema(schema string, db *sql.DB) {
+	_, err := db.Exec(schema)
+	if err != nil {
+		log.Printf("%q: %s\n", err, schema)
+	}
 }
 
 func getShort(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +100,20 @@ func getShort(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Go to `/new?url=urlhere` to create a new shortened url")
 		return
 	}
-	url := app.urls[code]
+	var url string
+	stmt, err := app.db.Prepare("select raw_url from url where code = ?")
+
+	if err != nil {
+		serverErrReqRes(err, w)
+		return
+	}
+
+	err = stmt.QueryRow(code).Scan(&url)
+
+	if err != nil {
+		serverErrReqRes(err, w)
+		return
+	}
 
 	if len(url) == 0 {
 		notFoundReqRes(w)
@@ -90,8 +141,17 @@ func newUrl(w http.ResponseWriter, r *http.Request) {
 			badReqRes(w)
 			return
 		}
-		app.urls[code] = rawUrl
-		log.Println(app.urls)
+		stmt, err := app.db.Prepare("INSERT INTO url(raw_url, code) values (?, ?)")
+		if err != nil {
+			serverErrReqRes(err, w)
+			return
+		}
+		defer stmt.Close()
+		_, err = stmt.Exec(rawUrl, code)
+		if err != nil {
+			serverErrReqRes(err, w)
+			return
+		}
 		createdReqRes(w)
 		fmt.Fprintf(w, code)
 		return
