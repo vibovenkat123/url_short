@@ -70,6 +70,10 @@ func getShort(w http.ResponseWriter, r *http.Request) {
 func newUrl(w http.ResponseWriter, r *http.Request) {
     switch r.Method {
     case http.MethodPost:
+        code := randCode(7)
+        for ok := true; ok; ok = len(code) == 0 {
+            code = randCode(7)
+        }
         rawUrl := r.FormValue("url")
         if len(rawUrl) == 0 {
             badReqRes(w)
@@ -80,7 +84,6 @@ func newUrl(w http.ResponseWriter, r *http.Request) {
             badReqRes(w)
             return
         }
-        code := randCode(7)
         app.urls[code] = rawUrl
         log.Println(app.urls)
         createdReqRes(w)
