@@ -55,13 +55,7 @@ func main() {
 
 func getShort(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	params := strings.Split(path, "/")
-	code := params[1]
-	if len(code) == 0 || len(params) != 2 {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "Go to `/new?url=urlhere` to create a new shortened url")
-		return
-	}
+	code := strings.Split(path, "/")[1]
 	url := app.urls[code]
 
 	if len(url) == 0 {
